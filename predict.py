@@ -7,13 +7,16 @@ Phase 14: Generate stacked predictions with 5 models
 import numpy as np
 import pandas as pd
 
+DEMAND_MIN = 6.245650e-7
+DEMAND_MAX = 1.0
+
 
 def predict_ensemble(models, weights, X):
     """Weighted-average prediction from a list of models."""
     preds = [m.predict(X) for m in models]
     blend = sum(weights[i] * preds[i] for i in range(len(models)))
     # Clip to valid demand range (0, 1]
-    return np.clip(blend, 1e-7, 1.0)
+    return np.clip(blend, DEMAND_MIN, DEMAND_MAX)
 
 
 def predict_stacking(models, meta_model, X):
@@ -26,15 +29,38 @@ def predict_stacking(models, meta_model, X):
     preds[:, 4] = models[4].predict(X)
     blend = meta_model.predict(preds)
     # Clip to valid demand range (0, 1]
-    return np.clip(blend, 1e-7, 1.0)
+    return np.clip(blend, DEMAND_MIN, DEMAND_MAX)
 
 
-def create_submission(test_df, predictions, output_path):
+def create_submission(test_df, predictions, output_path, train_df=None):
     """Save ``submission.csv`` in the competition format."""
     sub = pd.DataFrame({
         "Index": test_df["Index"],
         "demand": predictions,
     })
+
+    if train_df is not None:
+        geo_ts_max = (
+            train_df.groupby(["geohash", "timestamp"])["demand"]
+            .max()
+            .rename("max_train_demand")
+            .reset_index()
+        )
+        bounds = test_df[["Index", "geohash", "timestamp"]].merge(
+            geo_ts_max, on=["geohash", "timestamp"], how="left"
+        )
+        upper = (bounds["max_train_demand"] * 1.2).fillna(DEMAND_MAX)
+        sub["demand"] = np.minimum(sub["demand"].to_numpy(), upper.to_numpy())
+        sub["demand"] = np.clip(sub["demand"], DEMAND_MIN, DEMAND_MAX)
+
+    assert sub.shape == (41778, 2), f"WRONG SHAPE: {sub.shape}"
+    assert list(sub.columns) == ["Index", "demand"], (
+        f"WRONG COLUMNS: {sub.columns.tolist()}"
+    )
+    assert sub["Index"].tolist() == test_df["Index"].tolist(), (
+        "Index values do not match test data"
+    )
+    assert sub["demand"].isna().sum() == 0, "NaN values in demand column"
     sub.to_csv(output_path, index=False)
     print(f"\n  Submission saved  -> {output_path}")
     print(f"  Shape             : {sub.shape}")

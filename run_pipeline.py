@@ -42,7 +42,7 @@ TRAIN_CSV  = os.path.join(DATA_DIR, "train.csv")
 TEST_CSV   = os.path.join(DATA_DIR, "test.csv")
 OUTPUT_CSV = os.path.join(BASE_DIR, "submission.csv")
 
-OPTUNA_TRIALS = 30          # Trials per model during tuning
+OPTUNA_TRIALS = 100         # Trials per model during tuning
 VAL_RATIO     = 0.20        # Last 20 % of timestamps → validation
 
 
@@ -81,7 +81,7 @@ def main(do_tune: bool = True):
     print("\n" + "=" * 60)
     print("  Step 3 : Validation Split")
     print("=" * 60)
-    train_df_sorted = train_df.sort_values("minute_of_day").reset_index(drop=True)
+    train_df_sorted = train_df.sort_values(["day", "minute_of_day"]).reset_index(drop=True)
     split_idx = int(len(train_df_sorted) * (1 - VAL_RATIO))
     df_tr  = train_df_sorted.iloc[:split_idx]
     df_val = train_df_sorted.iloc[split_idx:]
@@ -153,6 +153,7 @@ def main(do_tune: bool = True):
     print("  Step 7 : Retraining on Full Training Data")
     print("=" * 60)
 
+    train_df = train_df.sort_values(["day", "minute_of_day"]).reset_index(drop=True)
     X_full = train_df[feature_cols]
     y_full = train_df["demand"]
 
@@ -268,7 +269,7 @@ def main(do_tune: bool = True):
     print("=" * 60)
     X_test = test_df[feature_cols]
     preds  = predict_stacking(final_models, meta_model, X_test)
-    sub    = create_submission(test_df, preds, OUTPUT_CSV)
+    sub    = create_submission(test_df, preds, OUTPUT_CSV, train_raw)
 
     # ── Summary ────────────────────────────────────────────────────
     elapsed = time.time() - t0

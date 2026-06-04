@@ -65,6 +65,10 @@ def add_temporal_features(df):
     df["cos_min"]   = np.cos(2 * np.pi * df["minute"] / 60)
     df["sin_mod"]   = np.sin(2 * np.pi * df["minute_of_day"] / 1440)
     df["cos_mod"]   = np.cos(2 * np.pi * df["minute_of_day"] / 1440)
+    df["day_mod7"]  = df["day"] % 7
+    df["sin_day"]   = np.sin(2 * np.pi * df["day_mod7"] / 7)
+    df["cos_day"]   = np.cos(2 * np.pi * df["day_mod7"] / 7)
+    df["is_weekend"] = df["day_mod7"].isin([5, 6]).astype(int)
 
     return df
 
@@ -257,6 +261,46 @@ def add_geohash_features(train_df, test_df):
     return train_df, test_df
 
 
+def add_historical_demand_features(train_df, test_df):
+    """Add leakage-safe demand features from strictly earlier days."""
+    global_mean = train_df["demand"].mean()
+    keys = ["geohash", "day", "minute_of_day"]
+    history = train_df[keys + ["demand"]].copy()
+
+    # Shift observations forward one day so every match comes from day-1.
+    history["day"] += 1
+    history = history.rename(columns={"demand": "geo_ts_mean_demand"})
+
+    for lag in (1, 2, 4):
+        lagged = history[keys + ["geo_ts_mean_demand"]].copy()
+        lagged["minute_of_day"] += lag * 15
+        lagged = lagged.rename(
+            columns={"geo_ts_mean_demand": f"demand_lag{lag}"}
+        )
+        history = history.merge(lagged, on=keys, how="left")
+
+    history["demand_roll4"] = history[
+        ["demand_lag1", "demand_lag2", "demand_lag4"]
+    ].mean(axis=1)
+
+    feature_cols = [
+        "geo_ts_mean_demand", "demand_lag1", "demand_lag2",
+        "demand_lag4", "demand_roll4",
+    ]
+    train_df = train_df.merge(history[keys + feature_cols], on=keys, how="left")
+    test_df = test_df.merge(history[keys + feature_cols], on=keys, how="left")
+
+    geo_mean = train_df.groupby("geohash")["demand"].mean()
+    for df in (train_df, test_df):
+        had_history = df["geo_ts_mean_demand"].notna()
+        fallback = df["geohash"].map(geo_mean).fillna(global_mean)
+        for col in feature_cols:
+            df[col] = df[col].fillna(fallback)
+        df["has_prev_day_demand"] = had_history.astype(int)
+
+    return train_df, test_df
+
+
 def add_early_morning_features(train_df, test_df):
     """Compute zero-imputed early morning (0:00 to 2:00) stats, activity ratios, neighbor propagation, late morning trends, and temporal decay."""
     def to_mins(t):
@@ -317,14 +361,16 @@ def add_early_morning_features(train_df, test_df):
     stats_d49 = pd.merge(stats_d49, stats_late_d49, on="geohash", how="left")
 
     # ── Spatial Neighbors Computation (Euclidean distance on coordinates) ──
-    from scipy.spatial.distance import cdist
+    from sklearn.neighbors import BallTree
     unique_geos = list(all_geos)
     geo_coords = {g: decode_geohash(g) for g in unique_geos}
     coords_arr = np.array([geo_coords[g] for g in unique_geos])
-    dists = cdist(coords_arr, coords_arr, metric="sqeuclidean")
-    
-    # neighbor_indices: closest 8 neighbors (excluding itself, which is column 0)
-    neighbor_indices = np.argsort(dists, axis=1)[:, 1:9]
+    coords_rad = np.radians(coords_arr)
+    tree = BallTree(coords_rad, metric="haversine")
+    _, neighbor_indices = tree.query(
+        coords_rad, k=min(9, len(unique_geos))
+    )
+    neighbor_indices = neighbor_indices[:, 1:]
     neighbors_dict = {unique_geos[i]: [unique_geos[idx] for idx in neighbor_indices[i]] for i in range(len(unique_geos))}
 
     def add_neighbor_stats(stats_df):
@@ -481,6 +527,7 @@ def engineer_all_features(train_df, test_df):
 
     print("  [3/6] Geohash features ...")
     train_df, test_df = add_geohash_features(train_df, test_df)
+    train_df, test_df = add_historical_demand_features(train_df, test_df)
     train_df, test_df = add_early_morning_features(train_df, test_df)
 
     print("  [4/6] Interaction features ...")
@@ -498,6 +545,10 @@ def engineer_all_features(train_df, test_df):
     print("  [6/6] Filling residual NaN ...")
     for df in (train_df, test_df):
         df.fillna(0, inplace=True)
+        for col in df.select_dtypes(include=["float64"]).columns:
+            df[col] = df[col].astype(np.float32)
+        for col in df.select_dtypes(include=["int64"]).columns:
+            df[col] = df[col].astype(np.int32)
 
     feat_cols = get_feature_cols(train_df)
     print(f"  * Done - {len(feat_cols)} features")

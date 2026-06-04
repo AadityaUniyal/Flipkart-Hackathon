@@ -13,7 +13,7 @@ import optuna
 from sklearn.ensemble import ExtraTreesRegressor
 from sklearn.neighbors import KNeighborsRegressor
 from sklearn.linear_model import Ridge
-from sklearn.model_selection import KFold
+from sklearn.model_selection import TimeSeriesSplit
 
 optuna.logging.set_verbosity(optuna.logging.WARNING)
 
@@ -228,9 +228,10 @@ def optimize_weights(preds_list, y_true, init=None):
 
 
 def train_stacking_meta_model(X, y, cb_params, lgb_params, xgb_params, et_params, knn_params, cb_iters, lgb_iters, xgb_iters):
-    """Perform 5-Fold CV to generate OOF predictions for 5 base models and train a Ridge meta-model."""
-    kf = KFold(n_splits=5, shuffle=True, random_state=42)
+    """Generate time-aware OOF predictions and train a Ridge meta-model."""
+    tscv = TimeSeriesSplit(n_splits=5)
     oof_preds = np.zeros((len(X), 5))
+    oof_mask = np.zeros(len(X), dtype=bool)
     
     cb_p = dict(
         iterations=cb_iters,
@@ -294,7 +295,7 @@ def train_stacking_meta_model(X, y, cb_params, lgb_params, xgb_params, et_params
         knn_p.update(knn_params)
     
     print("\n  Generating OOF predictions for Stacking (5 models)...")
-    for fold, (train_idx, val_idx) in enumerate(kf.split(X)):
+    for fold, (train_idx, val_idx) in enumerate(tscv.split(X)):
         X_tr, y_tr = X.iloc[train_idx], y.iloc[train_idx]
         X_val = X.iloc[val_idx]
         
@@ -324,18 +325,19 @@ def train_stacking_meta_model(X, y, cb_params, lgb_params, xgb_params, et_params
         knn_m = make_pipeline(StandardScaler(), KNeighborsRegressor(**knn_p))
         knn_m.fit(X_tr, y_tr)
         oof_preds[val_idx, 4] = knn_m.predict(X_val)
+        oof_mask[val_idx] = True
         
         print(f"    Fold {fold+1} complete")
         
     # Fit Ridge meta-model
     meta_model = Ridge(alpha=1.0, fit_intercept=True)
-    meta_model.fit(oof_preds, y)
+    meta_model.fit(oof_preds[oof_mask], y.iloc[oof_mask])
     
     print(f"  Stacking Ridge coefficients: CB={meta_model.coef_[0]:.3f}, LGB={meta_model.coef_[1]:.3f}, XGB={meta_model.coef_[2]:.3f}, ET={meta_model.coef_[3]:.3f}, KNN={meta_model.coef_[4]:.3f}")
     print(f"  Intercept: {meta_model.intercept_:.6f}")
     
     # Print R2 score of stacking OOF
-    oof_r2 = r2_score(y, meta_model.predict(oof_preds))
+    oof_r2 = r2_score(y.iloc[oof_mask], meta_model.predict(oof_preds[oof_mask]))
     print(f"  Stacking OOF R2 = {oof_r2:.6f}")
     
     return meta_model
