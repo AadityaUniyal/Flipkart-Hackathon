@@ -1,0 +1,360 @@
+
+TRAFFIC DEMAND PREDICTION HACKATHON - COMPLETE PROJECT PLAN
+
+PROJECT OBJECTIVE
+-----------------
+Build an AI/ML system capable of predicting traffic demand using spatial, temporal,
+weather, and road-network information. The evaluation metric is R² score, so the goal
+is to maximize predictive accuracy while ensuring the solution generalizes across the
+distribution shift between Day 48 and Day 49.
+
+====================================================
+PHASE 1: PROBLEM UNDERSTANDING
+====================================================
+
+Key Challenge:
+- Significant distribution shift exists between Day 48 and Day 49.
+- Most training samples belong to Day 48.
+- Day 49 contains fewer observations.
+- The model must generalize to unseen temporal conditions.
+
+Target:
+- Predict the "demand" column.
+- Demand values lie in the range (0,1].
+
+Evaluation:
+Score = max(0, 100 × R²(actual, predicted))
+
+Success Factors:
+1. Strong temporal feature engineering.
+2. Strong geospatial feature engineering.
+3. Proper validation strategy.
+4. Ensemble modeling.
+
+====================================================
+PHASE 2: DATA EXPLORATION (EDA)
+====================================================
+
+Objectives:
+- Understand data quality.
+- Detect anomalies.
+- Identify patterns.
+
+Tasks:
+1. Check missing values.
+2. Study demand distribution.
+3. Compare Day 48 vs Day 49.
+4. Analyze weather anomalies.
+5. Analyze road type distribution.
+6. Analyze geohash distribution.
+7. Study temperature behavior.
+8. Examine feature correlations.
+
+Deliverables:
+- EDA Notebook
+- Data Quality Report
+- Distribution Shift Report
+
+====================================================
+PHASE 3: TEMPORAL FEATURE ENGINEERING
+====================================================
+
+Extract from timestamp:
+
+- Hour
+- Minute
+- Minute of day
+- Part of day
+- Peak hour indicator
+- Rush hour indicator
+- Weekend indicator (if applicable)
+
+Cyclic Encoding:
+
+Create:
+- sin(hour)
+- cos(hour)
+- sin(minute)
+- cos(minute)
+
+Reason:
+Traffic demand follows periodic behavior.
+
+Expected Impact:
+Very High
+
+====================================================
+PHASE 4: GEOHASH FEATURE ENGINEERING
+====================================================
+
+Geohash is expected to be one of the strongest features.
+
+Tasks:
+
+1. Frequency Encoding
+   - Number of occurrences per geohash
+
+2. Target Encoding
+   - Mean demand per geohash
+
+3. Geohash Splitting
+   - Character 1
+   - Character 2
+   - Character 3
+   - Character 4
+   - Character 5
+   - Character 6
+
+4. Spatial Aggregations
+   - Mean demand by geohash
+   - Mean demand by geohash-hour
+   - Mean demand by geohash-weather
+
+Expected Impact:
+Very High
+
+====================================================
+PHASE 5: WEATHER & TEMPERATURE CLEANING
+====================================================
+
+Weather Issues:
+- Noisy labels
+- Potential anomalies
+
+Tasks:
+
+1. Create Day/Night Feature
+2. Detect Sunny-at-night anomalies
+3. Create weather anomaly flag
+4. Temperature median imputation
+5. Temperature binning:
+   - Cold
+   - Normal
+   - Hot
+
+Expected Impact:
+Medium
+
+====================================================
+PHASE 6: INTERACTION FEATURES
+====================================================
+
+Create combinations:
+
+1. RoadType × NumberofLanes
+2. Weather × Hour
+3. Geohash × Hour
+4. Landmark × RoadType
+5. Weather × TemperatureBin
+6. Geohash × Weather
+
+Purpose:
+Capture non-linear relationships.
+
+Expected Impact:
+High
+
+====================================================
+PHASE 7: VALIDATION STRATEGY
+====================================================
+
+CRITICAL STEP
+
+Avoid:
+- Random train/test split
+- Standard K-Fold
+
+Preferred:
+
+Training:
+Day 48
+
+Validation:
+Day 49
+
+Reason:
+Simulates real leaderboard conditions.
+
+Deliverables:
+Reliable offline validation score.
+
+====================================================
+PHASE 8: MODEL DEVELOPMENT
+====================================================
+
+Model 1:
+CatBoost Regressor
+
+Advantages:
+- Excellent categorical handling
+- Handles missing values
+- Strong baseline
+
+Model 2:
+LightGBM
+
+Advantages:
+- Fast
+- Powerful on tabular data
+
+Model 3:
+XGBoost
+
+Advantages:
+- Strong generalization
+- Handles feature interactions well
+
+Deliverable:
+Three trained baseline models.
+
+====================================================
+PHASE 9: HYPERPARAMETER TUNING
+====================================================
+
+Tool:
+Optuna
+
+Tune:
+
+CatBoost:
+- depth
+- learning_rate
+- iterations
+- l2_leaf_reg
+
+LightGBM:
+- num_leaves
+- max_depth
+- min_child_samples
+- learning_rate
+
+XGBoost:
+- max_depth
+- subsample
+- colsample_bytree
+- learning_rate
+
+Goal:
+Improve validation R².
+
+====================================================
+PHASE 10: ENSEMBLE STRATEGY
+====================================================
+
+Combine:
+
+40% CatBoost
+40% LightGBM
+20% XGBoost
+
+Alternative:
+Weighted optimization using validation score.
+
+Reason:
+Reduces variance and improves robustness.
+
+Expected Impact:
+Very High
+
+====================================================
+PHASE 11: ADVANCED FEATURES
+====================================================
+
+Demand Profiles:
+
+1. Mean demand by timestamp
+2. Mean demand by geohash-hour
+3. Mean demand by road type
+4. Rolling demand statistics
+5. Demand clusters
+
+Potential Techniques:
+
+- KMeans clustering
+- Spatial clustering
+- Demand segmentation
+
+Expected Impact:
+Medium to High
+
+====================================================
+PHASE 12: SUBMISSION PIPELINE
+====================================================
+
+Steps:
+
+1. Train final ensemble.
+2. Generate test predictions.
+3. Create submission file.
+
+Required Format:
+
+Columns:
+- Index
+- demand
+
+Rows:
+41778
+
+File:
+submission.csv
+
+====================================================
+TEAM EXECUTION PLAN
+====================================================
+
+Member 1:
+EDA & Data Cleaning
+
+Member 2:
+Feature Engineering
+
+Member 3:
+Model Training
+
+Member 4:
+Hyperparameter Tuning & Ensemble
+
+Final Day:
+- Error checking
+- Reproducibility testing
+- Submission generation
+
+====================================================
+PRIORITY ORDER
+====================================================
+
+Priority 1:
+Temporal Features
+
+Priority 2:
+Geohash Features
+
+Priority 3:
+Validation Strategy
+
+Priority 4:
+CatBoost Baseline
+
+Priority 5:
+Feature Interactions
+
+Priority 6:
+Hyperparameter Tuning
+
+Priority 7:
+Ensembling
+
+====================================================
+EXPECTED WINNING STRATEGY
+====================================================
+
+40% Timestamp Features
+30% Geohash Features
+20% Validation Strategy
+10% Model Optimization
+
+Focus on extracting maximum information from time and location
+instead of relying solely on complex models.
+
+End of Document.
