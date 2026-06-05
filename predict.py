@@ -32,16 +32,20 @@ def predict_stacking(models, meta_model, X):
     return np.clip(blend, DEMAND_MIN, DEMAND_MAX)
 
 
-def create_submission(test_df, predictions, output_path, train_df=None):
+def create_submission(test_df, predictions, output_path, train_raw=None):
     """Save ``submission.csv`` in the competition format."""
+    demand_min = train_raw["demand"].min() if train_raw is not None else 1e-7
+    demand_max = train_raw["demand"].max() if train_raw is not None else 1.0
+    predictions = np.clip(predictions, demand_min, demand_max)
+
     sub = pd.DataFrame({
         "Index": test_df["Index"],
         "demand": predictions,
     })
 
-    if train_df is not None:
+    if train_raw is not None:
         geo_ts_max = (
-            train_df.groupby(["geohash", "timestamp"])["demand"]
+            train_raw.groupby(["geohash", "timestamp"])["demand"]
             .max()
             .rename("max_train_demand")
             .reset_index()
@@ -49,9 +53,9 @@ def create_submission(test_df, predictions, output_path, train_df=None):
         bounds = test_df[["Index", "geohash", "timestamp"]].merge(
             geo_ts_max, on=["geohash", "timestamp"], how="left"
         )
-        upper = (bounds["max_train_demand"] * 1.2).fillna(DEMAND_MAX)
+        upper = (bounds["max_train_demand"] * 1.2).fillna(demand_max)
         sub["demand"] = np.minimum(sub["demand"].to_numpy(), upper.to_numpy())
-        sub["demand"] = np.clip(sub["demand"], DEMAND_MIN, DEMAND_MAX)
+        sub["demand"] = np.clip(sub["demand"], demand_min, demand_max)
 
     assert sub.shape == (41778, 2), f"WRONG SHAPE: {sub.shape}"
     assert list(sub.columns) == ["Index", "demand"], (
