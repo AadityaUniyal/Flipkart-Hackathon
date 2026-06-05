@@ -269,13 +269,13 @@ def add_historical_demand_features(train_df, test_df):
 
     # Shift observations forward one day so every match comes from day-1.
     history["day"] += 1
-    history = history.rename(columns={"demand": "geo_ts_mean_demand"})
+    history = history.rename(columns={"demand": "demand_prev_day"})
 
     for lag in (1, 2, 4):
-        lagged = history[keys + ["geo_ts_mean_demand"]].copy()
+        lagged = history[keys + ["demand_prev_day"]].copy()
         lagged["minute_of_day"] += lag * 15
         lagged = lagged.rename(
-            columns={"geo_ts_mean_demand": f"demand_lag{lag}"}
+            columns={"demand_prev_day": f"demand_lag{lag}"}
         )
         history = history.merge(lagged, on=keys, how="left")
 
@@ -284,7 +284,7 @@ def add_historical_demand_features(train_df, test_df):
     ].mean(axis=1)
 
     feature_cols = [
-        "geo_ts_mean_demand", "demand_lag1", "demand_lag2",
+        "demand_prev_day", "demand_lag1", "demand_lag2",
         "demand_lag4", "demand_roll4",
     ]
     train_df = train_df.merge(history[keys + feature_cols], on=keys, how="left")
@@ -292,13 +292,42 @@ def add_historical_demand_features(train_df, test_df):
 
     geo_mean = train_df.groupby("geohash")["demand"].mean()
     for df in (train_df, test_df):
-        had_history = df["geo_ts_mean_demand"].notna()
+        had_history = df["demand_prev_day"].notna()
         fallback = df["geohash"].map(geo_mean).fillna(global_mean)
         for col in feature_cols:
             df[col] = df[col].fillna(fallback)
         df["has_prev_day_demand"] = had_history.astype(int)
 
     return train_df, test_df
+
+
+def add_geo_ts_mean_demand_feature(train_df, test_df):
+    """Add true geo_ts_mean_demand (mean demand per geohash+timestamp across days)
+    using a leave-one-day-out calculation on train to prevent target leakage."""
+    global_mean = train_df["demand"].mean()
+
+    # Calculate sum and count of demand for each (geohash, timestamp) in train_df
+    geo_ts_stats = train_df.groupby(["geohash", "timestamp"])["demand"].agg(["sum", "count"]).reset_index()
+
+    # Merge stats back to train_df
+    train_df = train_df.merge(geo_ts_stats, on=["geohash", "timestamp"], how="left")
+
+    # Leave-one-day-out calculation: subtract current row's demand from sum, and 1 from count
+    train_df["geo_ts_mean_demand"] = (train_df["sum"] - train_df["demand"]) / (train_df["count"] - 1)
+
+    # If count is 1, then count - 1 is 0, which results in NaN. Fallback to geohash target encoding or global mean
+    train_df["geo_ts_mean_demand"] = train_df["geo_ts_mean_demand"].fillna(train_df["geohash_te"])
+
+    # Drop the temporary sum and count columns
+    train_df.drop(columns=["sum", "count"], inplace=True)
+
+    # For test_df, use the overall mean across all training days
+    geo_ts_mean = train_df.groupby(["geohash", "timestamp"])["demand"].mean().reset_index(name="geo_ts_mean_demand")
+    test_df = test_df.merge(geo_ts_mean, on=["geohash", "timestamp"], how="left")
+    test_df["geo_ts_mean_demand"] = test_df["geo_ts_mean_demand"].fillna(test_df["geohash_te"])
+
+    return train_df, test_df
+
 
 
 def add_early_morning_features(train_df, test_df):
@@ -528,6 +557,7 @@ def engineer_all_features(train_df, test_df):
     print("  [3/6] Geohash features ...")
     train_df, test_df = add_geohash_features(train_df, test_df)
     train_df, test_df = add_historical_demand_features(train_df, test_df)
+    train_df, test_df = add_geo_ts_mean_demand_feature(train_df, test_df)
     train_df, test_df = add_early_morning_features(train_df, test_df)
 
     print("  [4/6] Interaction features ...")
