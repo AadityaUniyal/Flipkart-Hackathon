@@ -1,12 +1,3 @@
-"""
-Traffic Demand Prediction – Feature Engineering
-================================================
-Phase 3 : Temporal features  (cyclic, peak / rush hour)
-Phase 4 : Geohash features   (char split, freq / target enc, spatial aggs)
-Phase 5 : Weather & temperature cleaning
-Phase 6 : Interaction features
-"""
-
 import pandas as pd
 import numpy as np
 from sklearn.preprocessing import LabelEncoder
