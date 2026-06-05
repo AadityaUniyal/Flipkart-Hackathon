@@ -156,9 +156,10 @@ def add_geohash_features(train_df, test_df):
             df["Landmarks"].astype(str)
         )
 
-    # ── Location Profiling (Day 48 stats) ─────────────────────────
-    d48 = train_df[train_df["day"] == 48]
-    loc_stats = d48.groupby("loc_key")["demand"].agg(
+    # ── Location Profiling (Baseline Day stats) ───────────────────
+    min_day = train_df["day"].min()
+    baseline_df = train_df[train_df["day"] == min_day]
+    loc_stats = baseline_df.groupby("loc_key")["demand"].agg(
         loc_demand_std="std",
         loc_demand_p90=lambda x: np.percentile(x, 90),
         loc_demand_p10=lambda x: np.percentile(x, 10),
@@ -322,7 +323,7 @@ def add_geo_ts_mean_demand_feature(train_df, test_df):
 
 
 def add_early_morning_features(train_df, test_df):
-    """Compute zero-imputed early morning (0:00 to 2:00) stats, activity ratios, neighbor propagation, late morning trends, and temporal decay."""
+    """Compute zero-imputed early morning (0:00 to 2:00) stats, activity ratios, neighbor propagation, late morning trends, and temporal decay dynamically."""
     def to_mins(t):
         h, m = map(int, t.split(":"))
         return h * 60 + m
@@ -332,55 +333,10 @@ def add_early_morning_features(train_df, test_df):
 
     early_df = train_cp[train_cp["minutes"] <= 120]
 
-    all_geos = set(train_df["geohash"].unique()).union(set(test_df["geohash"].unique()))
+    all_geos = sorted(set(train_df["geohash"].unique()).union(set(test_df["geohash"].unique())))
     early_minutes = [0, 15, 30, 45, 60, 75, 90, 105, 120]
 
-    # Day 48 early stats
-    grid_d48 = pd.MultiIndex.from_product([all_geos, early_minutes], names=["geohash", "minutes"]).to_frame().reset_index(drop=True)
-    early_d48 = early_df[early_df["day"] == 48][["geohash", "minutes", "demand"]]
-    grid_d48 = pd.merge(grid_d48, early_d48, on=["geohash", "minutes"], how="left").fillna(0.0)
-    stats_d48 = grid_d48.groupby("geohash")["demand"].agg(
-        early_mean="mean",
-        early_std="std",
-        early_max="max",
-        early_sum="sum",
-        early_last=lambda x: x.iloc[-1]
-    ).reset_index()
-    stats_d48["day"] = 48
-
-    # Day 49 early stats
-    grid_d49 = pd.MultiIndex.from_product([all_geos, early_minutes], names=["geohash", "minutes"]).to_frame().reset_index(drop=True)
-    early_d49 = early_df[early_df["day"] == 49][["geohash", "minutes", "demand"]]
-    grid_d49 = pd.merge(grid_d49, early_d49, on=["geohash", "minutes"], how="left").fillna(0.0)
-    stats_d49 = grid_d49.groupby("geohash")["demand"].agg(
-        early_mean="mean",
-        early_std="std",
-        early_max="max",
-        early_sum="sum",
-        early_last=lambda x: x.iloc[-1]
-    ).reset_index()
-    stats_d49["day"] = 49
-
-    # ── Temporal Velocity & Slope (1:00 AM to 2:00 AM) ──
-    late_d48 = grid_d48[grid_d48["minutes"] >= 60]
-    stats_late_d48 = late_d48.groupby("geohash")["demand"].agg(
-        early_late_mean="mean",
-        early_late_max="max",
-        early_late_std="std",
-        early_slope=lambda x: x.iloc[-1] - x.iloc[0]
-    ).reset_index()
-    stats_d48 = pd.merge(stats_d48, stats_late_d48, on="geohash", how="left")
-
-    late_d49 = grid_d49[grid_d49["minutes"] >= 60]
-    stats_late_d49 = late_d49.groupby("geohash")["demand"].agg(
-        early_late_mean="mean",
-        early_late_max="max",
-        early_late_std="std",
-        early_slope=lambda x: x.iloc[-1] - x.iloc[0]
-    ).reset_index()
-    stats_d49 = pd.merge(stats_d49, stats_late_d49, on="geohash", how="left")
-
-    # ── Spatial Neighbors Computation (Euclidean distance on coordinates) ──
+    # Spatial Neighbors Computation (Euclidean distance on coordinates)
     from sklearn.neighbors import BallTree
     unique_geos = list(all_geos)
     geo_coords = {g: decode_geohash(g) for g in unique_geos}
@@ -393,32 +349,62 @@ def add_early_morning_features(train_df, test_df):
     neighbor_indices = neighbor_indices[:, 1:]
     neighbors_dict = {unique_geos[i]: [unique_geos[idx] for idx in neighbor_indices[i]] for i in range(len(unique_geos))}
 
-    def add_neighbor_stats(stats_df):
-        stats_indexed = stats_df.set_index("geohash")
+    # Process each day dynamically
+    unique_days = sorted(early_df["day"].unique())
+    stats_list = []
+
+    for d in unique_days:
+        grid_d = pd.MultiIndex.from_product([all_geos, early_minutes], names=["geohash", "minutes"]).to_frame().reset_index(drop=True)
+        early_d = early_df[early_df["day"] == d][["geohash", "minutes", "demand"]]
+        grid_d = pd.merge(grid_d, early_d, on=["geohash", "minutes"], how="left").fillna(0.0)
+        
+        # Compute baseline stats
+        stats_d = grid_d.groupby("geohash")["demand"].agg(
+            early_mean="mean",
+            early_std="std",
+            early_max="max",
+            early_sum="sum",
+            early_last=lambda x: x.iloc[-1]
+        ).reset_index()
+        stats_d["day"] = d
+
+        # Compute late morning stats (1:00 AM to 2:00 AM)
+        late_d = grid_d[grid_d["minutes"] >= 60]
+        stats_late_d = late_d.groupby("geohash")["demand"].agg(
+            early_late_mean="mean",
+            early_late_max="max",
+            early_late_std="std",
+            early_slope=lambda x: x.iloc[-1] - x.iloc[0]
+        ).reset_index()
+        stats_d = pd.merge(stats_d, stats_late_d, on="geohash", how="left")
+
+        # Neighbor propagation
+        stats_indexed = stats_d.set_index("geohash")
         neighbor_early_mean = []
         neighbor_early_max = []
         neighbor_early_last = []
-        for g in stats_df["geohash"]:
+        for g in stats_d["geohash"]:
             ns = neighbors_dict[g]
             neighbor_early_mean.append(np.mean(stats_indexed.loc[ns, "early_mean"].values))
             neighbor_early_max.append(np.mean(stats_indexed.loc[ns, "early_max"].values))
             neighbor_early_last.append(np.mean(stats_indexed.loc[ns, "early_last"].values))
-        stats_df["neighbor_early_mean"] = neighbor_early_mean
-        stats_df["neighbor_early_max"] = neighbor_early_max
-        stats_df["neighbor_early_last"] = neighbor_early_last
-        return stats_df
+        stats_d["neighbor_early_mean"] = neighbor_early_mean
+        stats_d["neighbor_early_max"] = neighbor_early_max
+        stats_d["neighbor_early_last"] = neighbor_early_last
 
-    stats_d48 = add_neighbor_stats(stats_d48)
-    stats_d49 = add_neighbor_stats(stats_d49)
+        stats_list.append(stats_d)
 
-    # Combine
-    stats_all = pd.concat([stats_d48, stats_d49], ignore_index=True)
+    if len(stats_list) > 0:
+        stats_all = pd.concat(stats_list, ignore_index=True)
+    else:
+        # Fallback if no early morning data at all
+        stats_all = pd.DataFrame(columns=["geohash", "day", "early_mean", "early_std", "early_max", "early_sum", "early_last",
+                                          "early_late_mean", "early_late_max", "early_late_std", "early_slope",
+                                          "neighbor_early_mean", "neighbor_early_max", "neighbor_early_last"])
 
     # Merge
     train_df = pd.merge(train_df, stats_all, on=["geohash", "day"], how="left")
-
-    stats_d49_only = stats_d49.drop(columns=["day"])
-    test_df = pd.merge(test_df, stats_d49_only, on="geohash", how="left")
+    test_df = pd.merge(test_df, stats_all, on=["geohash", "day"], how="left")
 
     for df in (train_df, test_df):
         df["early_mean"] = df["early_mean"].fillna(0.0)
